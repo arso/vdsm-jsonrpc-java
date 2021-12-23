@@ -85,20 +85,24 @@ public class ResponseTracker implements Runnable {
     }
 
     public void registerTrackingRequest(JsonRpcRequest req, ResponseTracking tracking) {
-        JsonNode id = req.getId();
-        List<JsonNode> nodes = new CopyOnWriteArrayList<>();
+        final JsonNode id = req.getId();
         try (LockWrapper ignored = new LockWrapper(this.lock)) {
             this.map.put(id, tracking);
 
-            if(!this.queue.contains(id)){
+            if (!this.queue.contains(id)) {
                 this.queue.add(id);
             }
 
-            nodes.add(id);
-            nodes = this.hostToId.putIfAbsent(tracking.getClient().getClientId(), nodes);
-            if (nodes != null && !nodes.contains(id)) {
-                nodes.add(id);
-            }
+            this.hostToId.compute(tracking.getClient().getClientId(), (clientId, nodes) -> {
+                if (nodes == null) {
+                    nodes = new CopyOnWriteArrayList<>();
+                }
+
+                if (!nodes.contains(id)) {
+                    nodes.add(id);
+                }
+                return nodes;
+            });
         }
     }
 
@@ -133,7 +137,7 @@ public class ResponseTracker implements Runnable {
                 }
                 try {
                     final byte[] message = jsonToByteArray(tracking.getRequest().toJson());
-                    if (log.isDebugEnabled()){
+                    if (log.isDebugEnabled()) {
                         log.debug("Message to be sent {}", new String(message, StandardCharsets.UTF_8));
                     }
                     tracking.getClient().sendMessage(message);
@@ -202,7 +206,9 @@ public class ResponseTracker implements Runnable {
                 removeNodes(this.hostToId.get(code), errorResponse);
             } else {
                 String hostname = code.substring(0, code.indexOf(":"));
-                this.hostToId.keySet().stream().filter(key -> key.startsWith(hostname))
+                this.hostToId.keySet()
+                        .stream()
+                        .filter(key -> key.startsWith(hostname))
                         .forEach(key -> removeNodes(this.hostToId.get(key), errorResponse));
             }
         }
